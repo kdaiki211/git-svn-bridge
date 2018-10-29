@@ -1,3 +1,0 @@
-[submodule "git-svn-auth-manager/sqlcipher"]
-	path = git-svn-auth-manager/sqlcipher
-	url = git://github.com/sqlcipher/sqlcipher.git
