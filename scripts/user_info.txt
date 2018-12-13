@@ -1,0 +1,3 @@
+Hanako Yamada:hanako.yamada@XXXXXXXXXXX.com:hanako:hanako_password
+Taro Yamada:taro.yamada@XXXXXXXXXXX.com:taro:taro_password
+Daiki Komatsuda:kdaiki211@gmail.com:kdaiki211:kdaiki211_password

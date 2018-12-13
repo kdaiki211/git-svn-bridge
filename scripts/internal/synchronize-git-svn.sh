@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -u
 
 # IT IS VITALLY IMPORTANT THAT LINE ENDINGS ARE CONSISTENTLY SET IN THE
 # MIRROR REPO -- AS IT DOES A MERGE AND MESSES THINGS UP OTHERWISE
@@ -34,7 +34,8 @@ TRIGGERED_BY=${1:-NONE}
 
 set -u
 
-SCRIPT_FULL_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_FULL_PATH="$SCRIPT_DIR/$(basename "$0")"
 
 # ----------------------
 # --- CONFIGURATION ----
@@ -42,7 +43,7 @@ SCRIPT_FULL_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 # Configuration is sourced from scriptname.config
 
-CONFIGFILE="${SCRIPT_FULL_PATH}.config"
+CONFIGFILE="$SCRIPT_DIR/../$(basename "$0").config"
 
 if [[ ! -r "$CONFIGFILE" ]]
 then
@@ -59,9 +60,10 @@ fi
 function error_exit()
 {
 	local THECMD="$1"
-	local LOGFILE="$2"
+  local LAST_STATUS="$2"
+	local LOGFILE="$3"
 
-	echo "$THECMD FAILED" >> "$LOGFILE"
+	echo "$THECMD FAILED (exit code = $LAST_STATUS)" >> "$LOGFILE"
 	echo "$THECMD failed, see $LOGFILE" >&2
 	exit 1
 }
@@ -74,7 +76,7 @@ function check_status()
 	local LOGFILE="$2"
 
 	echo "=>" >> "$LOGFILE"
-	[[ $LAST_STATUS = 0 ]] || error_exit "$THECMD" "$LOGFILE"
+	[[ $LAST_STATUS = 0 ]] || error_exit "$THECMD" "$LAST_STATUS" "$LOGFILE"
 	[[ $LAST_STATUS = 0 ]] && echo "$THECMD successful" >> "$LOGFILE"
 	echo "----------------------------------------------" >> "$LOGFILE"
 }
@@ -85,9 +87,11 @@ function check_failure()
 	local LOGFILE="$2"
 
 	tail -6 "$LOGFILE" | grep 'error: git-svn died'
-	[[ $? = 0 ]] && error_exit "$THECMD (probably wrong SVN credentials)" "$LOGFILE"
+  RESULT=$?
+	[[ $RESULT = 0 ]] && error_exit "$THECMD (probably wrong SVN credentials)" "$RESULT" "$LOGFILE"
 	tail -6 "$LOGFILE" | grep 'uthorization failed'
-	[[ $? = 0 ]] && error_exit "$THECMD (probably wrong SVN credentials)" "$LOGFILE"
+  RESULT=$?
+	[[ $RESULT = 0 ]] && error_exit "$THECMD (probably wrong SVN credentials)" "$RESULT" "$LOGFILE"
 }
 
 function rotate_logs()
@@ -199,13 +203,12 @@ function set_subversion_user()
 	check_status "echo -n $AUTHOR_EMAIL > $LAST_SVN_USER_FILE" "$LOGFILE"
 
 	# reset SVN auth cache with git-svn-auth-manager
-	if ! ~/bin/git-svn-auth-manager \
-		-r "$AUTHOR_EMAIL" "$SVN_URL" &>> "$LOGFILE"
+	if ! $SCRIPT_DIR/set-svn-auth.py "$AUTHOR_EMAIL" "$SVN_URL" >> "$LOGFILE" 2>&1
 	then
 		echo "PROBLEM WITH SVN OR WITH $AUTHOR_EMAIL SVN CREDENTIALS" >&2
 		false
 	fi
-	check_status "~/bin/git-svn-auth-manager -r $AUTHOR_EMAIL $SVN_URL" "$LOGFILE"
+	check_status "$SCRIPT_DIR/set-svn-auth.py $AUTHOR_EMAIL $SVN_URL" "$LOGFILE"
 }
 
 function synchronize_svn_bridge_and_central_repo()
@@ -221,50 +224,56 @@ function synchronize_svn_bridge_and_central_repo()
 	# see http://serverfault.com/questions/107608/git-post-receive-hook-with-git-pull-failed-to-find-a-valid-git-directory/107703#107703
 	unset $(git rev-parse --local-env-vars)
 
-	# get new SVN changes
-	local AUTHORS_PROG="$HOME/bin/git-svn-auth-manager"
-	git svn --authors-prog="$AUTHORS_PROG" fetch &>> "$LOGFILE"
-	check_status "git svn --authors-prog=$AUTHORS_PROG fetch" "$LOGFILE"
-	check_failure "git svn --authors-prog=$AUTHORS_PROG fetch" "$LOGFILE"
-
-	# get new git changes
-	git checkout master &>> "$LOGFILE"
-	check_status "git checkout master" "$LOGFILE"
-	git pull --rebase git-central-repo master &>> "$LOGFILE"
-	check_status "git pull --rebase git-central-repo master" "$LOGFILE"
-
-	# store the SVN URL and author of the last commit for `git svn dcommit`
+	# store the admin's credential
 	local SVN_URL=`git svn info --url`
 	check_status "git svn info --url" "$LOGFILE"
+	local ADMIN_EMAIL=`git config --global user.email`
+	check_status "git config --global user.email" "$LOGFILE"
+	echo "Using SVN URL '$SVN_URL' and author email '$ADMIN_EMAIL'" "$LOGFILE"
+	set_subversion_user "$ADMIN_EMAIL" "$SVN_URL" "$LOGFILE"
+
+	# get new SVN changes first to avoid conflicting
+	local AUTHORS_PROG="$SCRIPT_DIR/authors_prog.py"
+	git checkout master >> "$LOGFILE" 2>&1
+	check_status "git checkout master" "$LOGFILE"
+
+	git svn fetch --authors-prog="$AUTHORS_PROG" >> "$LOGFILE" 2>&1
+  FETCH_RESULT=$?
+  if [ $FETCH_RESULT -ne 0 ]; then
+    echo "fetch failed" >> "$LOGFILE"
+    exit $FETCH_RESULT
+  fi
+  git merge --no-edit --no-ff --no-log remotes/svn/git-svn >> "$LOGFILE" 2>&1
+  MERGE_RESULT=$?
+  if [ $MERGE_RESULT -ne 0 ]; then
+    echo "Conflict detected (svn-repo to bridge) . Reverting bridge-repo." >> "$LOGFILE"
+    git merge --abort
+    # git rebase --abort
+    exit $MERGE_RESULT
+  fi
+
+	# get new git changes
+	git pull --no-edit --no-ff --no-log git-central-repo master >> "$LOGFILE" 2>&1
+  PULL_RESULT=$?
+  if [ $PULL_RESULT -ne 0 ]; then
+    echo "Conflict detected (git-central-repo to bridge) . Reverting bridge-repo." >>"$LOGFILE"
+    git merge --abort
+    exit $PULL_RESULT
+  fi
+
+	# store the SVN user's credential for dcommit
 	local AUTHOR_EMAIL=`git log -n 1 --format='%ae'`
 	check_status "git log -n 1 --format='%ae'" "$LOGFILE"
-	echo "Using SVN URL '$SVN_URL' and author email '$AUTHOR_EMAIL'" >> "$LOGFILE"
-
-	# checkout detached head
-	git checkout svn/git-svn &>> "$LOGFILE"
-	check_status "git checkout svn/git-svn" "$LOGFILE"
-
-	# create a merged log message for the merge commit to SVN
-	# => note that we squash log messages together for merge commits
-	# => experiment with the fomat, e.g. '%ai | [%an] %s' etc
-	local MESSAGE=`git log --pretty=format:'%ai | %B [%an]' HEAD..master`
-	check_status "git log --pretty=format:'%ai | %B [%an]' HEAD..master" "$LOGFILE"
-
-	# merge changes from master to the SVN-tracking branch and commit to SVN
-	# => note that we always record the merge with --no-ff
-	git merge --no-ff --no-log -m "$MESSAGE" master &>> $LOGFILE
-	check_status 'git merge --no-ff --no-log -m $MESSAGE master' $LOGFILE
-
-	# set the SVN user and commit changes to SVN
 	set_subversion_user "$AUTHOR_EMAIL" "$SVN_URL" "$LOGFILE"
-	git svn --authors-prog="$AUTHORS_PROG" dcommit &>> "$LOGFILE"
-	check_status "git svn --authors-prog=$AUTHORS_PROG dcommit" "$LOGFILE"
 
-	# merge changes from the SVN-tracking branch back to master
-	git checkout master &>> "$LOGFILE"
-	check_status "git checkout master" "$LOGFILE"
-	git merge svn/git-svn &>> "$LOGFILE"
-	check_status "git merge svn/git-svn" "$LOGFILE"
+  # commit to SVN
+	git svn dcommit --authors-prog="$AUTHORS_PROG" >> "$LOGFILE" 2>&1 
+  DCOMMIT_RESULT=$?
+  if [ $DCOMMIT_RESULT -ne 0 ]; then
+    echo "git svn dcommit failed. aborting"
+    git rebase --abort
+  fi
+	# check_status "git svn dcommit --authors-prog="$AUTHORS_PROG"" "$LOGFILE"
 
 	# fetch changes to central repo master from SVN bridge master
 	# (note that cannot just `git push git-central-repo master`
@@ -272,8 +281,8 @@ function synchronize_svn_bridge_and_central_repo()
 	local CENTRAL_REPO_PATH="`git remote -v show | awk 'NR > 1 { exit }; { print $2 };'`"
 	pushd "$CENTRAL_REPO_PATH" >/dev/null
 	check_status "pushd $CENTRAL_REPO_PATH" "$LOGFILE"
-	git fetch svn-bridge master:master &>> "$LOGFILE"
-	check_status "git fetch svn-bridge master:master" "$LOGFILE"
+	git fetch svn-bridge +master:master >> "$LOGFILE" 2>&1 
+	check_status "git fetch svn-bridge +master:master" "$LOGFILE"
 	popd >/dev/null
 
 	popd >/dev/null
