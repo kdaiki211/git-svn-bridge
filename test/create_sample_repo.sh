@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 TOP_DIR=$(cd $(dirname $0); pwd)/..
 TEST_DIR=$TOP_DIR/test
