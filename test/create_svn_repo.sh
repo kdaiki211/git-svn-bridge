@@ -8,8 +8,6 @@ SVN_REPO_PATH=$1
 SVN_REPO_URL=$2
 SVN_CONFIG_DIR=$SVN_REPO_PATH/conf
 SVN_SVNSERVE_CONF=$SVN_CONFIG_DIR/svnserve.conf
-SAMPLE_FILENAME1=foo.c
-SAMPLE_FILENAME2=hoge.c
 
 # create sample svn repo for testing
 svnadmin create $SVN_REPO_PATH
