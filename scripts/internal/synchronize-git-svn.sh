@@ -205,10 +205,9 @@ function set_subversion_user()
 	# reset SVN auth cache with git-svn-auth-manager
 	if ! $SCRIPT_DIR/set-svn-auth.py "$AUTHOR_EMAIL" "$SVN_URL" >> "$LOGFILE" 2>&1
 	then
-		echo "PROBLEM WITH SVN OR WITH $AUTHOR_EMAIL SVN CREDENTIALS" >&2
+		echo "failed to save svn credentials corresponding to git-email \"$AUTHOR_EMAIL\"" 2>&1 >> "$LOGFILE"
 		false
 	fi
-	check_status "$SCRIPT_DIR/set-svn-auth.py $AUTHOR_EMAIL $SVN_URL" "$LOGFILE"
 }
 
 function synchronize_svn_bridge_and_central_repo()
@@ -222,18 +221,19 @@ function synchronize_svn_bridge_and_central_repo()
 	# GIT_DIR (and possibly GIT_WORK_TREE) have to be unset,
 	# otherwise the script will not work from post-update hook
 	# see http://serverfault.com/questions/107608/git-post-receive-hook-with-git-pull-failed-to-find-a-valid-git-directory/107703#107703
-	unset $(git rev-parse --local-env-vars)
+	# unset $(git rev-parse --local-env-vars) # this command is valid only when current directory is git working copy
+	unset GIT_DIR
 
 	# store the admin's credential
-	local SVN_URL=`git svn info --url`
+	SVN_URL=`git svn info --url`
 	check_status "git svn info --url" "$LOGFILE"
-	local ADMIN_EMAIL=`git config --global user.email`
+	ADMIN_EMAIL=`git config --global user.email`
 	check_status "git config --global user.email" "$LOGFILE"
 	echo "Using SVN URL '$SVN_URL' and author email '$ADMIN_EMAIL'." >> "$LOGFILE"
 	set_subversion_user "$ADMIN_EMAIL" "$SVN_URL" "$LOGFILE"
 
 	# get new SVN changes first to avoid conflicting
-	local AUTHORS_PROG="$SCRIPT_DIR/authors_prog.py"
+	AUTHORS_PROG="$SCRIPT_DIR/authors_prog.py"
 	git checkout master >> "$LOGFILE" 2>&1
 	check_status "git checkout master" "$LOGFILE"
 
@@ -243,7 +243,7 @@ function synchronize_svn_bridge_and_central_repo()
     echo "fetch failed" >> "$LOGFILE"
     exit $FETCH_RESULT
   fi
-  git merge --no-edit --no-ff --no-log remotes/svn/git-svn >> "$LOGFILE" 2>&1
+  git merge --no-edit --no-ff --no-log remotes/svn/git-svn master >> "$LOGFILE" 2>&1
   MERGE_RESULT=$?
   if [ $MERGE_RESULT -ne 0 ]; then
     echo "Conflict detected (svn-repo to bridge) . Reverting bridge-repo." >> "$LOGFILE"
@@ -265,6 +265,17 @@ function synchronize_svn_bridge_and_central_repo()
 	local AUTHOR_EMAIL=`git log -n 1 --format='%ae'`
 	check_status "git log -n 1 --format='%ae'" "$LOGFILE"
 	set_subversion_user "$AUTHOR_EMAIL" "$SVN_URL" "$LOGFILE"
+  SET_SVN_USER_RESULT=$?
+  if [ $SET_SVN_USER_RESULT -ne 0 ]; then
+    # if only anonymous svn changes are exists, using admin's email
+    local ADMIN_EMAIL=`git config --global user.email`
+    set_subversion_user "$ADMIN_EMAIL" "$SVN_URL" "$LOGFILE"
+    SET_SVN_USER_RESULT=$?
+  fi
+  if [ $SET_SVN_USER_RESULT -ne 0 ]; then
+    # failed to acquire admin's email
+    exit $SET_SVN_USER_RESULT
+  fi
 
   # commit to SVN
 	git svn dcommit --authors-prog="$AUTHORS_PROG" >> "$LOGFILE" 2>&1 
