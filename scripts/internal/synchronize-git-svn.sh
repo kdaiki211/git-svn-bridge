@@ -229,7 +229,7 @@ function synchronize_svn_bridge_and_central_repo()
 	check_status "git svn info --url" "$LOGFILE"
 	local ADMIN_EMAIL=`git config --global user.email`
 	check_status "git config --global user.email" "$LOGFILE"
-	echo "Using SVN URL '$SVN_URL' and author email '$ADMIN_EMAIL'" "$LOGFILE"
+	echo "Using SVN URL '$SVN_URL' and author email '$ADMIN_EMAIL'." >> "$LOGFILE"
 	set_subversion_user "$ADMIN_EMAIL" "$SVN_URL" "$LOGFILE"
 
 	# get new SVN changes first to avoid conflicting
