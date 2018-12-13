@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash -ex
 
 TOP_DIR=$(cd $(dirname $0); pwd)/..
 TEST_DIR=$TOP_DIR/test
@@ -10,6 +10,7 @@ SVN_REPO_URL="svn://localhost/$SVN_REPO_PATH"
 SVN_WORK_PATH=$WORK_PATH/svn
 
 SAMPLE_FILENAME1=hoge.c
+SAMPLE_FILENAME2=fuga.c
 
 if [ $# -ne 1 ]; then
   echo "Usage: $0 SVN_REPO_PATH_TO_CREATE"

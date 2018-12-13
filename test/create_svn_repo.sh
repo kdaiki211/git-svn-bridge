@@ -25,7 +25,7 @@ cat << EOT > $SVN_REPO_PATH/conf/passwd
 taro = taro_password
 hanako = hanako_password
 kdaiki211 = kdaiki211_password
-i_dont_like_svn = i_like_svn
+i_dont_like_git = i_like_svn
 EOT
 
 # start svn server
