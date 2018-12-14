@@ -35,6 +35,8 @@ $SCRIPT_PATH/setup.sh $SVN_REPO_URL
 SAMPLE_FILENAME1=hoge.c # commited from SVN (from create_sample_repo.sh)
 SAMPLE_FILENAME2=piyo.c
 SAMPLE_FILENAME3=foobar.c
+SAMPLE_FILENAME4=jp1.c
+SAMPLE_FILENAME5=jp2.c
 
 # clone git repo
 echo '*** cloning git-repo'
@@ -49,7 +51,7 @@ echo '*** test svn commit then git push without conflict'
 pushd $SVN_WORK_PATH
 echo 'Hello SVN' >> $SAMPLE_FILENAME1
 $SCRIPT_PATH/internal/set-svn-auth.py 'hanako.yamada@XXXXXXXXXXX.com' $SVN_REPO_URL
-svn commit -m 'add Hello SVN comment'
+svn commit -m 'add Hello SVN comment.'
 popd
 pushd $GIT_WORK_PATH
 echo 'This is non-conflicted file' >> $SAMPLE_FILENAME2
@@ -61,6 +63,35 @@ git commit -m "add $SAMPLE_FILENAME2 from GIT"
 echo 'foobar file' >> $SAMPLE_FILENAME3
 git add $SAMPLE_FILENAME3
 git commit -m "add $SAMPLE_FILENAME3 from GIT"
+set +e
+git push # sync & dcommit. push result will be success only when dcommit success.
+PUSH_RESULT=$?
+set -e
+# expected "success" exit code
+if [ $PUSH_RESULT -ne 0 ]; then
+  echo 'FATAL: Exit code of git push must be success (zero).'
+  exit 1
+fi
+git pull --no-edit # update for next test
+echo '*** test succeeded!'
+popd
+
+
+# [Scenario] Test japanese SVN comment
+echo '*** test japanese SVN comment'
+pushd $SVN_WORK_PATH
+echo 'こんにちは SVN' > $SAMPLE_FILENAME4
+svn add $SAMPLE_FILENAME4
+$SCRIPT_PATH/internal/set-svn-auth.py 'hanako.yamada@XXXXXXXXXXX.com' $SVN_REPO_URL
+svn commit -m '日本語コメントテスト (SVN 側)'
+popd
+pushd $GIT_WORK_PATH
+echo 'こんにちは GIT' >> $SAMPLE_FILENAME5
+git add $SAMPLE_FILENAME5
+git config --local user.name 'Hanako Yamada'
+git config --local user.email 'hanako.yamada@XXXXXXXXXXX.com'
+git commit -m 'こんにちは GIT'
+
 set +e
 git push # sync & dcommit. push result will be success only when dcommit success.
 PUSH_RESULT=$?
